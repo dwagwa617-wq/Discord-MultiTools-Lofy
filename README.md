@@ -61,8 +61,8 @@ LOFYGANG Discord Tools é uma ferramenta poderosa desenvolvida em Node.js que of
 
 1. **Clone o repositório**
 ```bash
-git clone https://github.com/dwagwa617-wq/Lofy-Selfbot.git
-cd Lofy-Selfbot
+git clone https://github.com/dwagwa617-wq/Discord-MultiTools-Lofy.git
+cd Discord-MultiTools-Lofy
 ```
 
 2. **Instale as dependências**
