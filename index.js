@@ -692,7 +692,9 @@ async function entrarCanalVoz(userToken) {
 
 				if (!guildId || !channelId) {
 					console.log(chalk.red('\n[X] IDs invalidos.\n'));
-					await delay(5000);
+					await delay(2000);
+					client.destroy();
+					resolve();
 					return;
 				}
 
@@ -717,7 +719,7 @@ async function entrarCanalVoz(userToken) {
 				};
 
 				await join();
-				console.log(chalk.green('\n[✔] Conectado ao canal de voz.\n'));
+				console.log(chalk.green('\n[✔] Conectado ao canal de voz. (Rodando em background)\n'));
 
 				client.on('voiceStateUpdate', async (oldState, newState) => {
 					if (oldState.member?.id !== client.user.id) return;
@@ -733,10 +735,12 @@ async function entrarCanalVoz(userToken) {
 						}
 					}
 				});
+
+				await delay(2000);
+				resolve();
 			} catch (error) {
 				console.log(chalk.red(`\n[X] Erro ao conectar no voice: ${error.message}\n`));
-				await delay(5000);
-			} finally {
+				await delay(2000);
 				client.destroy();
 				resolve();
 			}
@@ -744,7 +748,7 @@ async function entrarCanalVoz(userToken) {
 
 		client.login(userToken).catch(async () => {
 			console.log(chalk.red('\n[X] Erro ao conectar com o token\n'));
-			await delay(5000);
+			await delay(2000);
 			resolve();
 		});
 	});
