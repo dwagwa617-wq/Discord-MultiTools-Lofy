@@ -6,12 +6,37 @@ import https from "https";
 import { joinVoiceChannel } from "@discordjs/voice";
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import pkg from 'selfbot-lofy'
+import fs from 'fs';
+import pkg from 'selfbot-lofy';
 const { lofy } = pkg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+let whitelist = [];
+let whiteListServers = [];
+let trigger = '';
+
+const whitelistFilePath = join(__dirname, 'whitelist.json');
+
+const loadWhitelist = () => {
+  if (fs.existsSync(whitelistFilePath)) {
+	const fileData = fs.readFileSync(whitelistFilePath, 'utf8');
+	const loaded = JSON.parse(fileData);
+	whitelist = Array.isArray(loaded.users) ? loaded.users : [];
+	whiteListServers = Array.isArray(loaded.servers) ? loaded.servers : [];
+  }
+};
+
+const saveWhitelist = () => {
+  const data = {
+	users: whitelist,
+	servers: whiteListServers
+  };
+  fs.writeFileSync(whitelistFilePath, JSON.stringify(data, null, 2));
+};
+
+loadWhitelist();
 
 console.clear();
 const asciiArt = `
@@ -21,7 +46,7 @@ const asciiArt = `
 ██║     ██║   ██║██╔══╝    ╚██╔╝  ██║   ██║██╔══██║██║╚██╗██║██║   ██║ 
 ███████╗╚██████╔╝██║        ██║   ╚██████╔╝██║  ██║██║ ╚████║╚██████╔╝    
 ╚══════╝ ╚═════╝ ╚═╝        ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝        
-                                                                                                          
+																										  
 `;
 
 const rl = readline.createInterface({
@@ -454,6 +479,937 @@ class ServerCloner {
 	}
 }
 
+async function clearOpenDMs(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+
+		client.on('ready', async () => {
+			try {
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Limpando todas as DMs abertas...\n'));
+
+				const dms = client.channels.cache.filter(channel => channel.type === 'DM');
+				loadWhitelist();
+				const whitelistSet = new Set(whitelist);
+
+				if (dms.size === 0) {
+					console.log(chalk.yellow('[!] Não há DMs abertas.\n'));
+					await delay(3000);
+					client.destroy();
+					resolve();
+					return;
+				}
+
+				let totalDMsProcessed = 0;
+				const totalDMs = dms.size;
+
+				for (const dm of dms.values()) {
+					if (whitelistSet.has(dm.recipient?.id || '')) {
+						console.log(chalk.yellow(`[!] DM com ${dm.recipient?.username} está na whitelist, pulando...`));
+						continue;
+					}
+
+					let count = 0;
+					let lastId;
+					let hasMoreMessages = true;
+
+					while (hasMoreMessages) {
+						try {
+							const messages = await dm.messages.fetch({ limit: 100, ...(lastId && { before: lastId }) });
+							
+							if (messages.size === 0) {
+								hasMoreMessages = false;
+								break;
+							}
+
+							const sortedMessages = Array.from(messages.values())
+								.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+							for (const message of sortedMessages) {
+								if (message.author.id === client.user?.id && !message.system) {
+									try {
+										await message.delete();
+										count++;
+										await delay(100);
+									} catch (error) {
+									}
+								}
+								lastId = message.id;
+							}
+						} catch (error) {
+							hasMoreMessages = false;
+						}
+					}
+
+					if (count > 0) {
+						console.log(chalk.green(`[+] Limpeza concluída na DM com ${dm.recipient?.tag}. Total: ${count}`));
+					}
+
+					try {
+						await dm.delete();
+						console.log(chalk.green(`[+] DM com ${dm.recipient?.tag} fechada.`));
+					} catch (error) {
+					}
+
+					totalDMsProcessed++;
+				}
+
+				console.log(chalk.green('\n[✔] Processo de limpeza finalizado.\n'));
+				await delay(5000);
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+			} finally {
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function deleteDms(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+
+		client.on('ready', async () => {
+			try {
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Fechando todas as DMs...\n'));
+
+				const dms = client.channels.cache.filter(channel => channel.type === 'DM');
+				loadWhitelist();
+				const whitelistSet = new Set(whitelist);
+				const dmCount = dms.size;
+				let processedDms = 0;
+
+				for (const dm of dms.values()) {
+					if (whitelistSet.has(dm.recipient?.id || '')) {
+						console.log(chalk.yellow(`[!] DM com ${dm.recipient?.username} está na whitelist, pulando...`));
+						continue;
+					}
+
+					try {
+						await dm.delete();
+						processedDms++;
+						console.log(chalk.green(`[+] DM com ${dm.recipient?.tag} fechada.`));
+					} catch (error) {
+					}
+				}
+
+				console.log(chalk.green('\n[✔] Processo de fechamento finalizado.\n'));
+				await delay(5000);
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+			} finally {
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function clearDmFriends(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+
+		client.on('ready', async () => {
+			try {
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Limpando DM de Amigos...\n'));
+
+				const friends = await got({
+					url: 'https://discord.com/api/v9/users/@me/relationships',
+					headers: { 'Authorization': userToken }
+				}).json();
+
+				loadWhitelist();
+				const whitelistSet = new Set(whitelist);
+				let totalMessagesDeleted = 0;
+
+				for (const friend of friends) {
+					if (whitelistSet.has(friend.id)) {
+						console.log(chalk.yellow(`[!] Amigo ${friend.user.username} está na whitelist, pulando...`));
+						continue;
+					}
+
+					const dm = client.channels.cache.find(ch => ch.type === 'DM' && ch.recipient?.id === friend.id);
+					if (!dm) continue;
+
+					let lastId;
+					let messagesDeleted = 0;
+
+					while (true) {
+						const messages = await dm.messages.fetch({ limit: 100, ...(lastId && { before: lastId }) });
+						if (messages.size === 0) break;
+
+						const sortedMessages = Array.from(messages.values())
+							.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+						for (const msg of sortedMessages) {
+							if (!msg.system && msg.author.id === client.user?.id) {
+								await msg.delete();
+								messagesDeleted++;
+								totalMessagesDeleted++;
+							}
+							lastId = msg.id;
+						}
+					}
+
+					if (messagesDeleted > 0) {
+						console.log(chalk.green(`[+] ${messagesDeleted} mensagens deletadas com ${friend.user.username}`));
+					}
+				}
+
+				console.log(chalk.green(`\n[✔] Total: ${totalMessagesDeleted} mensagens deletadas\n`));
+				await delay(5000);
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+			} finally {
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function clearContent(userToken) {
+	return new Promise((resolve) => {
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		const proceedWithClear = async (type, searchText = '') => {
+			const client = new discord.Client({ checkUpdate: false });
+
+			client.on('ready', async () => {
+				try {
+					const id = await ask(chalk.redBright('ID do canal ou usuário: '));
+
+					let channel;
+					try {
+						const user = await client.users.fetch(id);
+						channel = await user.createDM();
+					} catch {
+						channel = await client.channels.fetch(id);
+					}
+
+					console.clear();
+					displayAsciiArt();
+					console.log(chalk.cyan(`\n[i] Limpando conteúdo tipo: ${type}\n`));
+
+					let totalMessages = 0;
+					let tempLastId;
+
+					while (true) {
+						const tempMessages = await channel.messages.fetch({ limit: 100, ...(tempLastId && { before: tempLastId }) });
+						if (tempMessages.size === 0) break;
+
+						const filteredMessages = tempMessages.filter(m => {
+							if (m.author.id !== client.user?.id) return false;
+							if (type === 'text') {
+								return m.content.toLowerCase().includes(searchText.toLowerCase());
+							}
+							if (type === 'image') {
+								return m.attachments.some(a => a.contentType?.startsWith('image/'));
+							}
+							if (type === 'video') {
+								return m.attachments.some(a => a.contentType?.startsWith('video/'));
+							}
+							if (type === 'file') {
+								return m.attachments.size > 0;
+							}
+							return false;
+						});
+
+						totalMessages += filteredMessages.size;
+						tempLastId = tempMessages.last()?.id;
+						if (tempMessages.size < 100) break;
+					}
+
+					if (totalMessages === 0) {
+						console.log(chalk.yellow('[!] Nenhuma mensagem encontrada.\n'));
+						await delay(3000);
+						client.destroy();
+						resolve();
+						return;
+					}
+
+					console.log(chalk.cyan(`[i] Total de mensagens: ${totalMessages}\n`));
+
+					let deletedCount = 0;
+					let lastId;
+
+					while (true) {
+						const messages = await channel.messages.fetch({ limit: 100, ...(lastId && { before: lastId }) });
+						if (messages.size === 0) break;
+
+						const sortedMessages = Array.from(messages.values())
+							.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+						for (const message of sortedMessages) {
+							if (message.author.id === client.user?.id) {
+								let shouldDelete = false;
+								if (type === 'text') {
+									shouldDelete = message.content.toLowerCase().includes(searchText.toLowerCase());
+								} else if (type === 'image') {
+									shouldDelete = message.attachments.some(a => a.contentType?.startsWith('image/'));
+								} else if (type === 'video') {
+									shouldDelete = message.attachments.some(a => a.contentType?.startsWith('video/'));
+								} else if (type === 'file') {
+									shouldDelete = message.attachments.size > 0;
+								}
+
+								if (shouldDelete) {
+									try {
+										await message.delete();
+										deletedCount++;
+										await delay(100);
+									} catch (error) {
+									}
+								}
+							}
+							lastId = message.id;
+						}
+
+						if (messages.size < 100) break;
+					}
+
+					console.log(chalk.green(`\n[✔] ${deletedCount} mensagens deletadas\n`));
+					await delay(5000);
+				} catch (error) {
+					console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+					await delay(5000);
+				} finally {
+					client.destroy();
+					resolve();
+				}
+			});
+
+			client.login(userToken).catch(async () => {
+				console.log(chalk.red('\n[X] Erro ao conectar\n'));
+				await delay(5000);
+				resolve();
+			});
+		};
+
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[=] Limpar Conteúdo Específico'));
+			console.log(chalk.green('[1] Limpar Imagens'));
+			console.log(chalk.green('[2] Limpar Vídeos'));
+			console.log(chalk.green('[3] Limpar Arquivos'));
+			console.log(chalk.green('[4] Limpar Texto Específico'));
+			console.log(chalk.green('[0] Voltar\n'));
+
+			const choice = await ask(chalk.rgb(255, 140, 0)('Escolha: '));
+
+			switch (choice) {
+				case '1': await proceedWithClear('image'); break;
+				case '2': await proceedWithClear('video'); break;
+				case '3': await proceedWithClear('file'); break;
+				case '4':
+					const searchText = await ask(chalk.redBright('Texto a procurar: '));
+					if (searchText.trim()) {
+						await proceedWithClear('text', searchText);
+					}
+					break;
+				case '0':
+				default:
+					resolve();
+			}
+		})();
+	});
+}
+
+async function removeFriends(userToken) {
+	return new Promise(async (resolve) => {
+		try {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[i] Removendo amizades...\n'));
+
+			const friends = await got({
+				url: 'https://discord.com/api/v9/users/@me/relationships',
+				headers: { 'Authorization': userToken }
+			}).json();
+
+			loadWhitelist();
+			let count = 0;
+
+			for (const friend of friends) {
+				if (whitelist.includes(friend.id)) {
+					console.log(chalk.yellow(`[!] ${friend.user.username} está na whitelist`));
+					continue;
+				}
+
+				try {
+					await got({
+						url: `https://discord.com/api/v9/users/@me/relationships/${friend.id}`,
+						method: 'DELETE',
+						headers: { 'Authorization': userToken }
+					});
+					count++;
+					console.log(chalk.green(`[+] ${friend.user.username} removido`));
+				} catch (error) {
+				}
+			}
+
+			console.log(chalk.green(`\n[✔] ${count} amizades removidas\n`));
+			await delay(5000);
+		} catch (error) {
+			console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+			await delay(5000);
+		} finally {
+			resolve();
+		}
+	});
+}
+
+async function removeServers(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+
+		client.on('ready', async () => {
+			try {
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Removendo servidores...\n'));
+
+				const servers = client.guilds.cache.map((server) => server);
+				loadWhitelist();
+				let count = 0;
+
+				for (const server of servers) {
+					if (whitelist.includes(server.id)) {
+						console.log(chalk.yellow(`[!] ${server.name} está na whitelist`));
+						continue;
+					}
+
+					try {
+						await server.leave();
+						count++;
+						console.log(chalk.green(`[+] ${server.name} removido`));
+					} catch (error) {
+					}
+				}
+
+				console.log(chalk.green(`\n[✔] ${count} servidores removidos\n`));
+				await delay(5000);
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+			} finally {
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function manageWhitelist() {
+	return new Promise((resolve) => {
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[=] Whitelist'));
+			console.log(chalk.green('[1] WhiteList de Usuários'));
+			console.log(chalk.green('[2] WhiteList de Servidores'));
+			console.log(chalk.green('[0] Voltar\n'));
+
+			const choice = await ask(chalk.rgb(255, 140, 0)('Escolha: '));
+
+			if (choice === '1') {
+				await manageUserWhitelist();
+			} else if (choice === '2') {
+				await manageServerWhitelist();
+			}
+
+			resolve();
+		})();
+	});
+}
+
+async function manageUserWhitelist() {
+	return new Promise((resolve) => {
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[=] WhiteList de Usuários'));
+			console.log(chalk.green('[1] Adicionar ID'));
+			console.log(chalk.green('[2] Remover ID'));
+			console.log(chalk.green('[3] Listar IDs'));
+			console.log(chalk.green('[0] Voltar\n'));
+
+			const choice = await ask(chalk.rgb(255, 140, 0)('Escolha: '));
+
+			loadWhitelist();
+
+			switch (choice) {
+				case '1':
+					const addId = await ask(chalk.redBright('ID do usuário: '));
+					if (whitelist.includes(addId)) {
+						console.log(chalk.yellow('\n[!] ID já está na whitelist\n'));
+					} else {
+						whitelist.push(addId);
+						saveWhitelist();
+						console.log(chalk.green('\n[+] ID adicionado\n'));
+					}
+					await delay(2000);
+					break;
+				case '2':
+					const removeId = await ask(chalk.redBright('ID do usuário: '));
+					const index = whitelist.indexOf(removeId);
+					if (index === -1) {
+						console.log(chalk.yellow('\n[!] ID não encontrado\n'));
+					} else {
+						whitelist.splice(index, 1);
+						saveWhitelist();
+						console.log(chalk.green('\n[+] ID removido\n'));
+					}
+					await delay(2000);
+					break;
+				case '3':
+					console.log(chalk.cyan(`\n[i] Total: ${whitelist.length} IDs`));
+					whitelist.forEach(id => console.log(chalk.green(`  - ${id}`)));
+					console.log();
+					await delay(5000);
+					break;
+			}
+
+			resolve();
+		})();
+	});
+}
+
+async function manageServerWhitelist() {
+	return new Promise((resolve) => {
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[=] WhiteList de Servidores'));
+			console.log(chalk.green('[1] Adicionar ID'));
+			console.log(chalk.green('[2] Remover ID'));
+			console.log(chalk.green('[3] Listar IDs'));
+			console.log(chalk.green('[0] Voltar\n'));
+
+			const choice = await ask(chalk.rgb(255, 140, 0)('Escolha: '));
+
+			loadWhitelist();
+
+			switch (choice) {
+				case '1':
+					const addId = await ask(chalk.redBright('ID do servidor: '));
+					if (whiteListServers.includes(addId)) {
+						console.log(chalk.yellow('\n[!] ID já está na whitelist\n'));
+					} else {
+						whiteListServers.push(addId);
+						saveWhitelist();
+						console.log(chalk.green('\n[+] ID adicionado\n'));
+					}
+					await delay(2000);
+					break;
+				case '2':
+					const removeId = await ask(chalk.redBright('ID do servidor: '));
+					const index = whiteListServers.indexOf(removeId);
+					if (index === -1) {
+						console.log(chalk.yellow('\n[!] ID não encontrado\n'));
+					} else {
+						whiteListServers.splice(index, 1);
+						saveWhitelist();
+						console.log(chalk.green('\n[+] ID removido\n'));
+					}
+					await delay(2000);
+					break;
+				case '3':
+					console.log(chalk.cyan(`\n[i] Total: ${whiteListServers.length} IDs`));
+					whiteListServers.forEach(id => console.log(chalk.green(`  - ${id}`)));
+					console.log();
+					await delay(5000);
+					break;
+			}
+
+			resolve();
+		})();
+	});
+}
+
+async function utilInVoice(userToken) {
+	return new Promise((resolve) => {
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[=] Utilidades em Voz'));
+			console.log(chalk.green('[1] Mover todos de 1 Canal'));
+			console.log(chalk.green('[2] Desconectar todos de 1 Canal'));
+			console.log(chalk.green('[3] Desconectar todos de 1 Servidor'));
+			console.log(chalk.green('[0] Voltar\n'));
+
+			const choice = await ask(chalk.rgb(255, 140, 0)('Escolha: '));
+
+			if (choice === '1') {
+				await moveMembersToChannel(userToken);
+			} else if (choice === '2') {
+				await disconnectMembersFromChannel(userToken);
+			} else if (choice === '3') {
+				await disconnectMembersFromServer(userToken);
+			}
+
+			resolve();
+		})();
+	});
+}
+
+async function moveMembersToChannel(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		client.on('ready', async () => {
+			try {
+				const fromChannelId = await ask(chalk.redBright('ID do canal de origem: '));
+				const toChannelId = await ask(chalk.redBright('ID do canal de destino: '));
+
+				const fromChannel = client.channels.cache.get(fromChannelId);
+				const toChannel = client.channels.cache.get(toChannelId);
+
+				if (!fromChannel || !toChannel || fromChannel.type !== 'GUILD_VOICE' || toChannel.type !== 'GUILD_VOICE') {
+					console.log(chalk.red('\n[X] Canais inválidos\n'));
+					await delay(3000);
+					client.destroy();
+					resolve();
+					return;
+				}
+
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Movendo membros...\n'));
+
+				for (const [memberID, member] of fromChannel.members) {
+					try {
+						await member.voice.setChannel(toChannel);
+						console.log(chalk.green(`[+] ${member.user.tag} movido`));
+					} catch (error) {
+					}
+				}
+
+				console.log(chalk.green('\n[✔] Processo concluído\n'));
+				await delay(5000);
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+			} finally {
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function disconnectMembersFromChannel(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		client.on('ready', async () => {
+			try {
+				const channelId = await ask(chalk.redBright('ID do canal: '));
+				const channel = client.channels.cache.get(channelId);
+
+				if (!channel || channel.type !== 'GUILD_VOICE') {
+					console.log(chalk.red('\n[X] Canal inválido\n'));
+					await delay(3000);
+					client.destroy();
+					resolve();
+					return;
+				}
+
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Desconectando membros...\n'));
+
+				for (const [memberID, member] of channel.members) {
+					try {
+						await member.voice.disconnect();
+						console.log(chalk.green(`[+] ${member.user.tag} desconectado`));
+					} catch (error) {
+					}
+				}
+
+				console.log(chalk.green('\n[✔] Processo concluído\n'));
+				await delay(5000);
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+			} finally {
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function disconnectMembersFromServer(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		client.on('ready', async () => {
+			try {
+				const guildId = await ask(chalk.redBright('ID do servidor: '));
+				const guild = client.guilds.cache.get(guildId);
+
+				if (!guild) {
+					console.log(chalk.red('\n[X] Servidor inválido\n'));
+					await delay(3000);
+					client.destroy();
+					resolve();
+					return;
+				}
+
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Desconectando membros de todos os canais...\n'));
+
+				for (const [channelID, channel] of guild.channels.cache) {
+					if (channel.type === 'GUILD_VOICE') {
+						for (const [memberID, member] of channel.members) {
+							try {
+								await member.voice.disconnect();
+								console.log(chalk.green(`[+] ${member.user.tag} desconectado de ${channel.name}`));
+							} catch (error) {
+							}
+						}
+					}
+				}
+
+				console.log(chalk.green('\n[✔] Processo concluído\n'));
+				await delay(5000);
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+			} finally {
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function utilInChannel(userToken) {
+	return new Promise((resolve) => {
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[=] Utilidades em Chat'));
+			console.log(chalk.green('[1] Flodar mensagem em 1 Canal'));
+			console.log(chalk.green('[0] Voltar\n'));
+
+			const choice = await ask(chalk.rgb(255, 140, 0)('Escolha: '));
+
+			if (choice === '1') {
+				await floodMessage(userToken);
+			}
+
+			resolve();
+		})();
+	});
+}
+
+async function floodMessage(userToken) {
+	return new Promise((resolve) => {
+		const client = new discord.Client({ checkUpdate: false });
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		client.on('ready', async () => {
+			try {
+				const message = await ask(chalk.redBright('Mensagem para flodar: '));
+				const channelId = await ask(chalk.redBright('ID do canal: '));
+
+				const channel = client.channels.cache.get(channelId);
+
+				if (!channel || channel.type !== 'GUILD_TEXT') {
+					console.log(chalk.red('\n[X] Canal inválido\n'));
+					await delay(3000);
+					client.destroy();
+					resolve();
+					return;
+				}
+
+				console.clear();
+				displayAsciiArt();
+				console.log(chalk.cyan('\n[i] Iniciando flood... Digite "0" para parar\n'));
+
+				let flooding = true;
+
+				const floodInterval = setInterval(async () => {
+					if (!flooding) {
+						clearInterval(floodInterval);
+						return;
+					}
+
+					try {
+						await channel.send(message);
+					} catch (error) {
+					}
+				}, 100);
+
+				const stopFlood = () => {
+					rl.question('', (input) => {
+						if (input.trim() === '0') {
+							flooding = false;
+							clearInterval(floodInterval);
+							console.log(chalk.green('\n[✔] Flood interrompido\n'));
+							client.destroy();
+							resolve();
+						} else {
+							stopFlood();
+						}
+					});
+				};
+
+				stopFlood();
+			} catch (error) {
+				console.log(chalk.red(`\n[X] Erro: ${error.message}\n`));
+				await delay(5000);
+				client.destroy();
+				resolve();
+			}
+		});
+
+		client.login(userToken).catch(async () => {
+			console.log(chalk.red('\n[X] Erro ao conectar\n'));
+			await delay(5000);
+			resolve();
+		});
+	});
+}
+
+async function setTrigger() {
+	return new Promise((resolve) => {
+		const ask = (question) => new Promise((res) => {
+			rl.question(question, (answer) => res(answer.trim()));
+		});
+
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			console.log(chalk.cyan('\n[=] Configurar Trigger'));
+			console.log(chalk.yellow(`[i] Trigger atual: ${trigger || 'Nenhum'}\n`));
+
+			const newTrigger = await ask(chalk.redBright('Nova palavra-chave do trigger: '));
+
+			if (newTrigger) {
+				trigger = newTrigger;
+				
+				if (triggerClient) {
+					triggerClient.destroy();
+					triggerClient = null;
+				}
+				startTriggerClient(token);
+				
+				console.log(chalk.green('\n[✔] Trigger atualizado\n'));
+			} else {
+				console.log(chalk.yellow('\n[!] Operação cancelada\n'));
+			}
+
+			await delay(2000);
+			resolve();
+		})();
+	});
+}
+
+async function manageSettings() {
+	return new Promise((resolve) => {
+		(async () => {
+			console.clear();
+			displayAsciiArt();
+			loadWhitelist();
+			console.log(chalk.cyan('\n[i] Configurações atuais:'));
+			console.log(chalk.green(`  Trigger: ${trigger || 'Não configurado'}`));
+			console.log(chalk.green(`  Whitelist: ${whitelist.length} usuários`));
+			console.log(chalk.green(`  Whitelist Servidores: ${whiteListServers.length} servidores\n`));
+			await delay(5000);
+			resolve();
+		})();
+	});
+}
+
 async function adicionarHypesquad(userToken) {
 	return new Promise(async (resolve) => {
 		const ask = (question) => new Promise((res) => {
@@ -770,93 +1726,160 @@ async function menuLoop() {
 
 		const title = "MENU";
 
-		console.log(chalk.rgb(0, 160, 255)('┌───────────────────────────────┐'));
-		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)(title.padEnd(29)) + chalk.rgb(0, 160, 255)('│'));
-		console.log(chalk.rgb(0, 160, 255)('├───────────────────────────────┤'));
-		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('1') + chalk.rgb(120, 120, 120)(' - Message Cleaner') + '          ' + chalk.rgb(0, 160, 255)('│'));
-		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('2') + chalk.rgb(120, 120, 120)(' - Server Cloner') + '           ' + chalk.rgb(0, 160, 255)('│'));
-		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('3') + chalk.rgb(120, 120, 120)(' - Join Voice') + '              ' + chalk.rgb(0, 160, 255)('│'));
-		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('4') + chalk.rgb(120, 120, 120)(' - Add Hypesquad') + '           ' + chalk.rgb(0, 160, 255)('│'));
-		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('5') + chalk.rgb(120, 120, 120)(' - Remove Hypesquad') + '        ' + chalk.rgb(0, 160, 255)('│'));
-		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('0') + chalk.rgb(120, 120, 120)(' - Sair') + '                     ' + chalk.rgb(0, 160, 255)('│'));
-		console.log(chalk.rgb(0, 160, 255)('└───────────────────────────────┘'));
+		console.log(chalk.rgb(0, 160, 255)('┌────────────────────────────────────┐'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)(title.padEnd(34)) + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('├────────────────────────────────────┤'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('1 ') + chalk.rgb(120, 120, 120)(' - Clear DM') + '                   ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('2 ') + chalk.rgb(120, 120, 120)(" - Clear DM's") + '                 ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('3 ') + chalk.rgb(120, 120, 120)(' - Clear DM Friends') + '           ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('4 ') + chalk.rgb(120, 120, 120)(' - Clear Content') + '              ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('5 ') + chalk.rgb(120, 120, 120)(' - Server Cloner') + '              ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('6 ') + chalk.rgb(120, 120, 120)(' - Trigger') + '                    ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('7 ') + chalk.rgb(120, 120, 120)(' - Clear Friends') + '              ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('8 ') + chalk.rgb(120, 120, 120)(' - Clear Servers') + '              ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('9 ') + chalk.rgb(120, 120, 120)(' - Delete DMs') + '                 ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('10') + chalk.rgb(120, 120, 120)(' - WhiteList') + '                  ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('11') + chalk.rgb(120, 120, 120)(' - Utilidades em Call') + '       ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('12') + chalk.rgb(120, 120, 120)(' - Utilidades em Chat') + '       ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('13') + chalk.rgb(120, 120, 120)(' - Join Voice') + '                 ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('14') + chalk.rgb(120, 120, 120)(' - Add Hypesquad') + '            ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('15') + chalk.rgb(120, 120, 120)(' - Remove Hypesquad') + '         ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('99') + chalk.rgb(120, 120, 120)(' - Configurações') + '            ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('│') + ' ' + chalk.rgb(255, 140, 0)('0 ') + chalk.rgb(120, 120, 120)(' - Sair') + '                      ' + chalk.rgb(0, 160, 255)('│'));
+		console.log(chalk.rgb(0, 160, 255)('└────────────────────────────────────┘'));
 		console.log();
 
 		const option = await askMain(chalk.rgb(255, 140, 0)('Escolha uma opção: '));
 
-		if (option === '0') {
-			console.log(chalk.red('Saindo...'));
-			rl.close();
-			process.exit(0);
+		switch (option) {
+			case '0':
+				console.log(chalk.red('Saindo...'));
+				rl.close();
+				process.exit(0);
+				break;
+			case '1':
+				await limparMensagens(token);
+				break;
+			case '2':
+				await clearOpenDMs(token);
+				break;
+			case '3':
+				await clearDmFriends(token);
+				break;
+			case '4':
+				await clearContent(token);
+				break;
+			case '5':
+				await clonarServidor(token);
+				break;
+			case '6':
+				await setTrigger();
+				break;
+			case '7':
+				await removeFriends(token);
+				break;
+			case '8':
+				await removeServers(token);
+				break;
+			case '9':
+				await deleteDms(token);
+				break;
+			case '10':
+				await manageWhitelist();
+				break;
+			case '11':
+				await utilInVoice(token);
+				break;
+			case '12':
+				await utilInChannel(token);
+				break;
+			case '13':
+				await entrarCanalVoz(token);
+				break;
+			case '14':
+				await adicionarHypesquad(token);
+				break;
+			case '15':
+				await removerHypesquad(token);
+				break;
+			case '99':
+				await manageSettings();
+				break;
+			default:
+				console.log(chalk.yellow('Opcao invalida.'));
+				await delay(1000);
 		}
-
-		if (option === '1') {
-			console.clear();
-			displayAsciiArt();
-			console.log();
-			await limparMensagens(token);
-			continue;
-		}
-
-		if (option === '2') {
-			console.clear();
-			displayAsciiArt();
-			console.log();
-			await clonarServidor(token);
-			continue;
-		}
-
-		if (option === '3') {
-			console.clear();
-			displayAsciiArt();
-			console.log();
-			await entrarCanalVoz(token);
-			continue;
-		}
-
-		if (option === '4') {
-			console.clear();
-			displayAsciiArt();
-			console.log();
-			await adicionarHypesquad(token);
-			continue;
-		}
-
-		if (option === '5') {
-			console.clear();
-			displayAsciiArt();
-			console.log();
-			await removerHypesquad(token);
-			continue;
-		}
-
-		console.log(chalk.yellow('Opcao invalida.'));
-		await new Promise(resolve => setTimeout(resolve, 1000));
 	}
 }
+
+// Trigger client (background)
+let triggerClient = null;
+
+const startTriggerClient = (userToken) => {
+	if (!trigger || triggerClient) return;
+
+	triggerClient = new discord.Client({ checkUpdate: false });
+
+	triggerClient.on('messageCreate', async (message) => {
+		if (!trigger || !message.content) return;
+		if (message.author.id !== triggerClient.user?.id) return;
+
+		if (message.content === trigger) {
+			try {
+				let channel = message.channel;
+				let lastId;
+
+				while (true) {
+					const messages = await channel.messages.fetch({ limit: 100, ...(lastId && { before: lastId }) });
+					if (messages.size === 0) break;
+
+					const sortedMessages = Array.from(messages.values()).sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+					for (const msg of sortedMessages) {
+						if (!msg.system && msg.author.id === triggerClient.user?.id) {
+							await msg.delete().catch(() => {});
+						}
+						lastId = msg.id;
+					}
+
+					if (messages.size < 100) break;
+				}
+			} catch (error) {
+			}
+		}
+	});
+
+	triggerClient.login(userToken).catch(() => {
+		triggerClient = null;
+	});
+};
 
 rl.question(chalk.rgb(255, 0, 0)('Discord token: '), async (tokenv) => {
   token = tokenv;
 
   try {
-    const verify = await got({
-      url: "https://discord.com/api/v9/users/@me",
-      headers: {
-        "authorization": token
-      }
-    }).json();
+	const verify = await got({
+	  url: "https://discord.com/api/v9/users/@me",
+	  headers: {
+		"authorization": token
+	  }
+	}).json();
 
-    const username = verify.username;
-    console.log(chalk.green(`Logged with success, ${username}!\n`));
+	const username = verify.username;
+	console.log(chalk.green(`Logged with success, ${username}!\n`));
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
+	if (trigger) {
+	  startTriggerClient(token);
+	}
 
-    await menuLoop();
+	await new Promise(resolve => setTimeout(resolve, 2000));
 
-    return;
+	await menuLoop();
+
+	return;
 
   } catch (error) {
-    console.error(chalk.red('Invalid token!'));
-    rl.close();
+	console.error(chalk.red('Invalid token!'));
+	rl.close();
   }
 });
